@@ -2,15 +2,18 @@
 """Build data/deadlines.json for tracker.html.
 
 Steps:
-  1. Read conference deadlines from the open-source "ai-deadlines" list
-     (the maintained Hugging Face copy by default).
+  1. Read conference deadlines from the AI deadlines list that Hugging Face keeps
+     on Papers with Code (https://paperswithcode.co/ai-deadlines), through its
+     public API. Full conference names come from the huggingface/ai-deadlines
+     GitHub repository, because the API does not include them.
   2. Check those conferences on OpenReview, and add the extra OpenReview venues
      listed in data/openreview_venues.yml (see scripts/openreview.py).
   3. Add the African venues kept by hand in data/african_venues.yml.
   4. Turn every deadline into a UTC time and write data/deadlines.json.
 
 Usage:
-    python scripts/update_deadlines.py                           # Hugging Face list + OpenReview
+    python scripts/update_deadlines.py                           # Papers with Code API + OpenReview
+    python scripts/update_deadlines.py --source huggingface      # GitHub repo (updated less often)
     python scripts/update_deadlines.py --source paperswithcode   # old list (last updated 2024)
     python scripts/update_deadlines.py --no-openreview           # skip OpenReview
 
@@ -41,6 +44,11 @@ DEFAULT_OUT = ROOT / "data" / "deadlines.json"
 DEFAULT_OPENREVIEW = ROOT / "data" / "openreview_venues.yml"
 
 SOURCES = {
+    "api": {
+        "label": "Papers with Code AI deadlines",
+        "page": "https://paperswithcode.co/ai-deadlines",
+        "url": "https://paperswithcode.co/api/v1/conferences/deadlines",
+    },
     "paperswithcode": {
         "label": "paperswithcode/ai-deadlines",
         "page": "https://github.com/paperswithcode/ai-deadlines",
@@ -289,6 +297,64 @@ def read_huggingface(raw: bytes) -> list[dict]:
     return out
 
 
+def read_api(raw: bytes) -> list[dict]:
+    """JSON from paperswithcode.co/api/v1/conferences/deadlines.
+
+    Deadlines are already in UTC ("deadline_at"); "timezone" is the organisers' own zone."""
+    data = json.loads(raw)
+    items = data.get("results") or []
+    if data.get("count") and data["count"] > len(items):
+        print(f"  warning: the API says {data['count']} conferences but sent {len(items)}", file=sys.stderr)
+    names = full_names_from_repo()
+    out = []
+    for item in items:
+        title = str(item.get("short_name") or item.get("name") or "").strip()
+        year = item.get("year")
+        paper = abstract = None
+        for d in item.get("deadlines") or []:
+            kind = str(d.get("type", "")).lower()
+            when = d.get("deadline_at")
+            if not when:
+                continue
+            pair = (datetime.fromisoformat(str(when).replace("Z", "+00:00")), d.get("timezone") or "UTC")
+            if kind in ("paper", "submission") and paper is None:
+                paper = pair
+            elif kind == "abstract" and abstract is None:
+                abstract = pair
+        sub_type = "Full paper"
+        if paper is None and abstract is not None:
+            paper, abstract, sub_type = abstract, None, "Abstract"
+        conf = {
+            "id": item.get("slug"),
+            "title": title,
+            "year": year,
+            "full_name": names.get((title.lower(), year)) or names.get(title.lower()) or "",
+            "link": item.get("url"),
+            "start": item.get("start_date"),
+            "end": item.get("end_date"),
+            "place": item.get("location"),
+            "tags": item.get("tags") or [],
+        }
+        out.append(make_record(conf, paper=paper, abstract=abstract, source="Papers with Code", africa=False, sub_type=sub_type))
+    return out
+
+
+def full_names_from_repo() -> dict:
+    """Full conference names from the huggingface/ai-deadlines repository (best effort)."""
+    try:
+        raw = fetch(SOURCES["huggingface"]["url"])
+    except Exception as err:  # names are nice to have, not needed
+        print(f"  warning: could not read full names ({err})", file=sys.stderr)
+        return {}
+    names = {}
+    for rec in read_huggingface(raw):
+        if rec["full_name"]:
+            title = rec["name"].removesuffix(str(rec["year"])).strip().lower()
+            names[(title, rec["year"])] = rec["full_name"]
+            names.setdefault(title, rec["full_name"])
+    return names
+
+
 def latest_editions(records: list[dict]) -> list[dict]:
     """Keep only the newest year of each conference, so old editions do not fill the page.
 
@@ -507,6 +573,23 @@ def add_upcoming(records: list[dict], api, active: list[str]) -> list[dict]:
     return out
 
 
+AFRICAN_COUNTRIES = {
+    "algeria", "angola", "benin", "botswana", "burkina faso", "burundi", "cabo verde", "cape verde", "cameroon",
+    "central african republic", "chad", "comoros", "congo", "côte d'ivoire", "cote d'ivoire", "ivory coast",
+    "djibouti", "egypt", "equatorial guinea", "eritrea", "eswatini", "ethiopia", "gabon", "gambia", "ghana",
+    "guinea", "guinea-bissau", "kenya", "lesotho", "liberia", "libya", "madagascar", "malawi", "mali",
+    "mauritania", "mauritius", "morocco", "mozambique", "namibia", "niger", "nigeria", "rwanda",
+    "são tomé and príncipe", "sao tome and principe", "senegal", "seychelles", "sierra leone", "somalia",
+    "south africa", "south sudan", "sudan", "tanzania", "togo", "tunisia", "uganda", "zambia", "zimbabwe",
+}
+
+
+def held_in_africa(location: str) -> bool:
+    """True when the last part of 'City, Country' is an African country."""
+    country = str(location or "").split(",")[-1].strip().lower()
+    return country in AFRICAN_COUNTRIES
+
+
 def sort_key(rec: dict):
     # Same order as the page before it knows the time: by deadline, unknown deadlines last.
     return (rec["deadline_utc"] is None, rec["deadline_utc"] or "", rec["name"])
@@ -514,7 +597,7 @@ def sort_key(rec: dict):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--source", choices=sorted(SOURCES), default="huggingface")
+    ap.add_argument("--source", choices=sorted(SOURCES), default="api")
     ap.add_argument("--no-openreview", action="store_true", help="do not check OpenReview")
     ap.add_argument("--openreview-venues", type=Path, default=DEFAULT_OPENREVIEW,
                     help="extra OpenReview venues to show (YAML)")
@@ -525,7 +608,7 @@ def main() -> int:
     src = SOURCES[args.source]
     print(f"Downloading {src['label']} ...")
     raw = fetch(src["url"])
-    reader = read_paperswithcode if args.source == "paperswithcode" else read_huggingface
+    reader = {"api": read_api, "paperswithcode": read_paperswithcode, "huggingface": read_huggingface}[args.source]
     records = reader(raw)
     records = latest_editions(records)
     print(f"  {len(records)} conferences (newest edition of each)")
@@ -547,6 +630,8 @@ def main() -> int:
     for rec in records:  # working values, not needed on the page
         rec.pop("cycle", None)
         rec.pop("_template", None)
+        if held_in_africa(rec["location"]):
+            rec["africa"] = True
 
     african = read_african(args.african)
     print(f"  {len(african)} African venues from {args.african.name}")

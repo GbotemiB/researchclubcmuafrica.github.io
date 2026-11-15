@@ -35,7 +35,7 @@ jobs:
         run: pip install pyyaml
 
       - name: Build data/deadlines.json
-        # Hugging Face ai-deadlines list + OpenReview + African venues.
+        # Papers with Code AI deadlines (kept by Hugging Face) + OpenReview + African venues.
         # OpenReview limits how fast we can call it, so this step takes a few minutes.
         run: python scripts/update_deadlines.py
 
