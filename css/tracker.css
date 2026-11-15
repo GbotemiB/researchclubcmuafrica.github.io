@@ -426,3 +426,19 @@
     opacity: 0.85;
     margin-right: 0.4rem;
 }
+
+/* Line about who keeps the list up to date */
+.volunteer-note {
+    margin-top: 0.75rem;
+    font-size: 0.9rem !important;
+    opacity: 0.9;
+}
+
+.header-link.is-disabled {
+    opacity: 0.7;
+    cursor: default;
+}
+
+.header-link.is-disabled:hover {
+    background: rgba(255, 255, 255, 0.18);
+}

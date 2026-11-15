@@ -2,6 +2,12 @@
 // Used by tracker.html and workshops.html. A page can set window.TRACKER_CONFIG = { types: [...] }
 // before loading this file, to show only some types (for example Workshop and Summer school).
 (function () {
+    // ================================================================================
+    // "Suggest an opportunity" form. PUT THE GOOGLE FORM LINK HERE (this is the only place).
+    // Until it is set, the button says "form coming soon" and does nothing.
+    const SUGGEST_FORM_URL = "https://forms.gle/REPLACE-WITH-YOUR-FORM-ID";
+    // ================================================================================
+
     const KIGALI = "Africa/Kigali";
     const AOE = "Etc/GMT+12"; // UTC-12. The sign is reversed in these zone names.
     const DAY = 86400000;
@@ -363,7 +369,22 @@
         }
     }
 
+    function setUpSuggestLink() {
+        const link = document.getElementById("suggestLink");
+        if (!link) return;
+        if (SUGGEST_FORM_URL.includes("REPLACE-WITH")) {
+            link.removeAttribute("href");
+            link.removeAttribute("target");
+            link.setAttribute("aria-disabled", "true");
+            link.classList.add("is-disabled");
+            link.append(" (form coming soon)");
+        } else {
+            link.href = SUGGEST_FORM_URL;
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", () => {
+        setUpSuggestLink();
         document.getElementById("fieldFilter").addEventListener("change", render);
         document.getElementById("typeFilter").addEventListener("change", render);
         document.getElementById("toggleClosed").addEventListener("click", function () {

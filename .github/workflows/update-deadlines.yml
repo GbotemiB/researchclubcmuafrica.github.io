@@ -13,6 +13,7 @@ on:
       - data/openreview_venues.yml
       - data/full_names.yml
       - data/manual/**
+      - data/review/**
       - scripts/**
 
 permissions:
@@ -36,19 +37,21 @@ jobs:
       - name: Install PyYAML
         run: pip install pyyaml
 
-      - name: Build data/deadlines.json
-        # Papers with Code AI deadlines (kept by Hugging Face) + OpenReview + African venues.
-        # OpenReview limits how fast we can call it, so this step takes a few minutes.
+      - name: Build data/deadlines.json and the review list
+        # Papers with Code AI deadlines (kept by Hugging Face), OpenReview, awesome-mlss,
+        # Python Deadlines and the hand-kept files. Also adds new items from the ACL member
+        # portal to data/review/pending.yaml (not shown on the page until a volunteer approves them).
+        # OpenReview and the ACL portal must be read slowly, so this step takes a few minutes.
         run: python scripts/update_deadlines.py
 
       - name: Commit if the data changed
         run: |
-          if git diff --quiet -- data/deadlines.json; then
+          if [ -z "$(git status --porcelain -- data/deadlines.json data/review/pending.yaml)" ]; then
             echo "No changes to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
-          git add data/deadlines.json
-          git commit -m "Update conference deadlines"
+          git add data/deadlines.json data/review/pending.yaml
+          git commit -m "Update deadlines and review list"
           git push

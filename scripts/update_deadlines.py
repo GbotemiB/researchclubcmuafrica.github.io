@@ -37,6 +37,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import openreview as orv  # noqa: E402
+import review  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_AFRICAN = ROOT / "data" / "african_venues.yml"
@@ -45,6 +46,8 @@ DEFAULT_OPENREVIEW = ROOT / "data" / "openreview_venues.yml"
 DEFAULT_NAMES = ROOT / "data" / "full_names.yml"
 DEFAULT_WORKSHOPS = ROOT / "data" / "manual" / "workshops.yaml"
 DEFAULT_SCHOOLS = ROOT / "data" / "manual" / "summer-schools.yaml"
+DEFAULT_APPROVED = ROOT / "data" / "manual" / "approved.yaml"
+DEFAULT_PENDING = ROOT / "data" / "review" / "pending.yaml"
 
 # Kinds of opportunity shown on the page, in filter order.
 TYPES = ["Conference", "Workshop", "Summer school", "Community talk", "Fellowship"]
@@ -232,13 +235,21 @@ def location(conf: dict) -> str:
     return ", ".join(parts) or "To be announced"
 
 
+def name_with_year(title, year) -> str:
+    """'AfricaNLP', 2027 -> 'AfricaNLP 2027'; a title that already has the year is left as it is."""
+    title = str(title or "").strip()
+    if year and re.search(rf"\b{year}\b", title):
+        return title
+    return f"{title} {year or ''}".strip()
+
+
 def make_record(conf: dict, *, paper, abstract, source: str, africa: bool, sub_type: str,
                 kind: str = "Conference") -> dict:
     """paper and abstract are (date, timezone) pairs or None."""
     deadline_utc = to_utc(*paper) if paper else None
     record = {
         "id": str(conf.get("id") or f"{conf.get('title')}{conf.get('year')}").lower(),
-        "name": f"{conf.get('title')} {conf.get('year') or ''}".strip(),
+        "name": name_with_year(conf.get("title"), conf.get("year")),
         "year": int(conf.get("year") or 0),
         "full_name": str(conf.get("full_name") or "").strip(),
         "submission_type": sub_type,
@@ -903,6 +914,9 @@ def main() -> int:
     ap.add_argument("--names", type=Path, default=DEFAULT_NAMES, help="hand-kept full names (YAML)")
     ap.add_argument("--workshops", type=Path, default=DEFAULT_WORKSHOPS, help="hand-kept workshops (YAML)")
     ap.add_argument("--schools", type=Path, default=DEFAULT_SCHOOLS, help="hand-kept summer schools (YAML)")
+    ap.add_argument("--approved", type=Path, default=DEFAULT_APPROVED, help="items approved by volunteers (YAML)")
+    ap.add_argument("--pending", type=Path, default=DEFAULT_PENDING, help="review list to update (YAML)")
+    ap.add_argument("--no-review", action="store_true", help="do not update the review list")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
 
@@ -969,7 +983,9 @@ def main() -> int:
     print(f"  {len(workshops)} workshops from {args.workshops.name}")
     schools = read_manual(args.schools, source="Summer schools list", default_type="Summer school", africa=None)
     print(f"  {len(schools)} summer schools from {args.schools.name}")
-    manual = african + workshops + schools
+    approved = read_manual(args.approved, source="Approved by volunteers", default_type="Conference", africa=None)
+    print(f"  {len(approved)} items from {args.approved.name}")
+    manual = african + workshops + schools + approved
     # A hand-kept entry replaces an entry from the sources with the same name.
     names = {r["name"].lower() for r in manual}
     records = [r for r in records if r["name"].lower() not in names] + manual
@@ -985,6 +1001,16 @@ def main() -> int:
 
     counts = {t: sum(1 for r in records if r["type"] == t) for t in TYPES}
     print("  By type: " + ", ".join(f"{t}: {n}" for t, n in counts.items()))
+
+    # Review list (data/review/pending.yaml): never shown on the page, so a failure here
+    # must not stop the tracker data from being written.
+    if not args.no_review:
+        print("Updating the review list ...")
+        try:
+            result = review.update_review(args.pending, args.approved, records, held_in_africa)
+            print(f"  {review.SOURCE}: " + ", ".join(f"{k}: {v}" for k, v in result.items()))
+        except Exception as err:
+            review.warn(f"{review.SOURCE} failed ({err}); review list left as it is")
 
     # Only touch the file when the data changed, so the daily job does not make empty commits.
     if old and {k: v for k, v in old.items() if k != "updated_at"} == payload:
