@@ -1,0 +1,52 @@
+# Updates data/deadlines.json once a day for tracker.html.
+# It runs scripts/update_deadlines.py and commits the JSON only when it changed.
+name: Update conference deadlines
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # every day at 03:00 UTC (05:00 in Kigali)
+  workflow_dispatch: # lets you run it by hand from the Actions tab
+  push:
+    branches: [main]
+    paths:
+      - data/african_venues.yml
+      - data/openreview_venues.yml
+      - scripts/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-deadlines
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Build data/deadlines.json
+        # Hugging Face ai-deadlines list + OpenReview + African venues.
+        # OpenReview limits how fast we can call it, so this step takes a few minutes.
+        run: python scripts/update_deadlines.py
+
+      - name: Commit if the data changed
+        run: |
+          if git diff --quiet -- data/deadlines.json; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add data/deadlines.json
+          git commit -m "Update conference deadlines"
+          git push
