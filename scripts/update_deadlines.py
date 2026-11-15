@@ -43,6 +43,11 @@ DEFAULT_AFRICAN = ROOT / "data" / "african_venues.yml"
 DEFAULT_OUT = ROOT / "data" / "deadlines.json"
 DEFAULT_OPENREVIEW = ROOT / "data" / "openreview_venues.yml"
 DEFAULT_NAMES = ROOT / "data" / "full_names.yml"
+DEFAULT_WORKSHOPS = ROOT / "data" / "manual" / "workshops.yaml"
+DEFAULT_SCHOOLS = ROOT / "data" / "manual" / "summer-schools.yaml"
+
+# Kinds of opportunity shown on the page, in filter order.
+TYPES = ["Conference", "Workshop", "Summer school", "Community talk", "Fellowship"]
 
 SOURCES = {
     "api": {
@@ -197,7 +202,9 @@ def label_from_tag(tag: str) -> str:
     words = [w for w in re.split(r"[-_\s]+", text) if w]
     out = []
     for i, w in enumerate(words):
-        if w.lower() in UPPER_WORDS:
+        if w.lower() == "ml":  # spell out, e.g. "ML for Health" -> "Machine Learning for Health"
+            out.append("Machine Learning")
+        elif w.lower() in UPPER_WORDS:
             out.append(w.upper())
         elif i and w.lower() in SMALL_WORDS:
             out.append(w.lower())
@@ -225,7 +232,8 @@ def location(conf: dict) -> str:
     return ", ".join(parts) or "To be announced"
 
 
-def make_record(conf: dict, *, paper, abstract, source: str, africa: bool, sub_type: str) -> dict:
+def make_record(conf: dict, *, paper, abstract, source: str, africa: bool, sub_type: str,
+                kind: str = "Conference") -> dict:
     """paper and abstract are (date, timezone) pairs or None."""
     deadline_utc = to_utc(*paper) if paper else None
     record = {
@@ -251,6 +259,13 @@ def make_record(conf: dict, *, paper, abstract, source: str, africa: bool, sub_t
         "link": str(conf.get("link") or "").strip(),
         "africa": africa,
         "source": source,
+        "type": kind,
+        "parent": str(conf.get("parent") or "").strip() or None,
+        # Hand-kept entries only: "Check date" when the date is not confirmed,
+        # and "yearly" to show "Check next year's date" once the deadline passes.
+        "check_date": bool(conf.get("check_date")),
+        "recurring": str(conf.get("recurring") or "").strip().lower() or None,
+        "note": str(conf.get("note") or "").strip() or None,
     }
     return record
 
@@ -375,19 +390,32 @@ def latest_editions(records: list[dict]) -> list[dict]:
     return list(best.values())
 
 
-def read_african(path: Path) -> list[dict]:
+def read_manual(path: Path, *, source: str, default_type: str, africa: bool | None) -> list[dict]:
+    """Read a hand-edited YAML list (same fields as data/african_venues.yml).
+
+    africa=None means each entry says it with "africa: true"; otherwise all entries get that value.
+    An entry can set "type" (Conference, Workshop, ...) and "parent" (the conference a workshop belongs to)."""
+    if not path.exists():
+        return []
     out = []
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or []
-    for conf in data:
+    for conf in yaml.safe_load(path.read_text(encoding="utf-8")) or []:
+        kind = str(conf.get("type") or default_type)
+        if kind not in TYPES:
+            print(f"  warning: unknown type {kind!r} for {conf.get('title')} in {path.name}", file=sys.stderr)
         out.append(make_record(
             conf,
             paper=(conf.get("deadline"), conf.get("timezone")),
             abstract=(conf["abstract_deadline"], conf.get("timezone")) if conf.get("abstract_deadline") else None,
-            source="African venues list",
-            africa=True,
+            source=source,
+            africa=bool(conf.get("africa")) if africa is None else africa,
             sub_type=str(conf.get("submission_type") or "Full paper"),
+            kind=kind,
         ))
     return out
+
+
+def read_african(path: Path) -> list[dict]:
+    return read_manual(path, source="African venues list", default_type="Conference", africa=True)
 
 
 # ---------- OpenReview ----------
@@ -422,7 +450,20 @@ def record_from_openreview(info: dict, *, title: str, year: int, fields: list[st
         "link": info["website"] or info["link"],
         "africa": africa,
         "source": "OpenReview",
+        "type": "Workshop" if "/Workshop/" in info["id"] else "Conference",
+        "parent": parent_from_id(info["id"]),
+        "check_date": False,
+        "recurring": None,
+        "note": None,
     }
+
+
+def parent_from_id(venue_id: str) -> str | None:
+    """'NeurIPS.cc/2026/Workshop/Africa_in_AI' -> 'NeurIPS 2026'."""
+    if "/Workshop/" not in venue_id:
+        return None
+    short, year, _ = orv.split_venue_id(venue_id.split("/Workshop/")[0] + "/Conference")
+    return f"{short} {year}" if short and year else None
 
 
 def plain_differs(a: str, b: str) -> bool:
@@ -493,6 +534,234 @@ def add_openreview(records: list[dict], venues_file: Path, api, active: list[str
     return records
 
 
+# ---------- Workshops on OpenReview ----------
+
+def add_workshops(records: list[dict], api, active: list[str]) -> tuple[list[dict], bool]:
+    """Add the OpenReview workshops of conferences on the tracker whose event is still ahead.
+
+    Returns (records, ok). ok is False when OpenReview could not be read for some conference."""
+    today = datetime.now(timezone.utc).date()
+    by_key = {}
+    for rec in records:
+        if rec.get("type", "Conference") == "Conference" and rec["year"]:
+            by_key[(orv.plain(rec["name"].removesuffix(str(rec["year"]))), rec["year"])] = rec
+    parents = {}
+    for vid in active:
+        if "/Workshop/" not in vid:
+            continue
+        prefix = vid.split("/Workshop/")[0]
+        short, year, _ = orv.split_venue_id(prefix + "/Conference")
+        rec = by_key.get((orv.plain(short or ""), year))
+        if rec and not (rec["deadline_utc"] and event_is_over(rec, today)):
+            parents[prefix] = rec
+    known = {r["id"] for r in records}
+    added = no_form = 0
+    ok = True
+    for prefix, conf in sorted(parents.items()):
+        result = api.workshops(prefix)
+        if result is None:
+            ok = False
+            orv.warn(f"could not read workshops of {conf['name']}")
+            continue
+        found, missing = result
+        no_form += missing
+        for info in found:
+            if info["id"].lower() in known:
+                continue  # already listed, e.g. from data/openreview_venues.yml
+            short = info["id"].split("/Workshop/")[-1].replace("_", " ")
+            rec = record_from_openreview(info, title=short, year=conf["year"], fields=conf["fields"],
+                                         africa="africa" in (info["id"] + info["title"]).lower())
+            rec["name"] = short  # the parent conference already shows the year
+            rec["full_name"] = re.sub(rf"\s*{conf['year']}$", "", info["title"]) if info["title"] else ""
+            rec["type"] = "Workshop"
+            rec["parent"] = conf["name"]
+            rec["submission_type"] = "Workshop paper"
+            if not info.get("location"):
+                rec["location"] = conf["location"]
+            rec["_scanned"] = True
+            if rec["deadline_utc"] and event_is_over(rec, today):
+                continue
+            records.append(rec)
+            known.add(rec["id"])
+            added += 1
+    print(f"  Workshops: {added} added from {len(parents)} conferences ({no_form} have no submission form yet)")
+    return records, ok
+
+
+def keep_last_good(records: list[dict], old: dict | None) -> list[dict]:
+    """OpenReview failed for some calls: bring back what it gave last time instead of dropping it."""
+    if not old:
+        return records
+    by_id = {r["id"]: r for r in records}
+    names = {(r["name"].lower(), r.get("parent")) for r in records}
+    kept = 0
+    for prev in old.get("conferences") or []:
+        cur = by_id.get(prev["id"])
+        if cur is None and prev.get("source") == "OpenReview" and (prev["name"].lower(), prev.get("parent")) not in names:
+            prev = dict(prev)
+            if prev.get("type") == "Workshop" and prev.get("parent"):
+                prev["_scanned"] = True
+            records.append(prev)
+            kept += 1
+        elif cur is not None and not cur.get("openreview_deadline_utc") and prev.get("openreview_deadline_utc"):
+            cur["openreview_deadline_utc"] = prev["openreview_deadline_utc"]
+            cur["openreview_link"] = prev.get("openreview_link")
+            kept += 1
+    print(f"  OpenReview had errors: kept {kept} entries from the last good data")
+    return records
+
+
+# ---------- Summer schools (awesome-mlss) and community talks (Python Deadlines) ----------
+# Both are MIT-licensed; see data/THIRD_PARTY_NOTICES.md.
+
+EXTRA_SOURCES = {
+    "awesome-mlss": {
+        "page": "https://awesome-mlss.com",
+        "data": "https://raw.githubusercontent.com/sshkhr/awesome-mlss/master/site/_data/summerschools.yml",
+        "types": "https://raw.githubusercontent.com/sshkhr/awesome-mlss/master/site/_data/types.yml",
+    },
+    "Python Deadlines": {
+        "page": "https://pythondeadlin.es",
+        "data": "https://raw.githubusercontent.com/jesperdramsch/python-deadlines/main/_data/conferences.yml",
+        "types": "https://raw.githubusercontent.com/jesperdramsch/python-deadlines/main/_data/types.yml",
+    },
+}
+
+# Short field codes from those lists, written out in full (these win over the lists' own names).
+EXTRA_FIELD_NAMES = {
+    "GenAI": "Generative AI",
+    "HW": "Machine Learning Hardware",
+    "AI4Games": "AI for Games",
+}
+
+
+def field_names(types_url: str) -> dict:
+    """Code -> full field name, from a source's types.yml (best effort)."""
+    try:
+        types = yaml.safe_load(fetch(types_url)) or []
+        names = {str(t["sub"]): str(t["name"]) for t in types if t.get("sub") and t.get("name")}
+    except Exception as err:
+        print(f"  warning: could not read field names ({err})", file=sys.stderr)
+        names = {}
+    names.update(FIELD_CODES)
+    names.update(EXTRA_FIELD_NAMES)
+    return names
+
+
+def codes_to_fields(sub, names: dict) -> list[str]:
+    if isinstance(sub, str):
+        sub = [c.strip() for c in sub.split(",")]
+    return [names.get(str(c), str(c)) for c in (sub or []) if str(c).strip()]
+
+
+def read_awesome_mlss() -> list[dict]:
+    """Summer schools from awesome-mlss. Keeps the newest edition of each school.
+
+    A school whose event is over (or that has no deadline) becomes a "Check date" card for its
+    next edition, showing the last deadline, so volunteers know to look for the new date."""
+    src = EXTRA_SOURCES["awesome-mlss"]
+    items = yaml.safe_load(fetch(src["data"])) or []
+    names = field_names(src["types"])
+    today = datetime.now(timezone.utc).date()
+    newest: dict[str, dict] = {}
+    for item in items:
+        year = int(item.get("year") or 0)
+        series = orv.plain(item.get("series") or re.sub(r"\b20\d\d\b", "", str(item.get("title", ""))))
+        if series not in newest or year > int(newest[series].get("year") or 0):
+            newest[series] = item
+    out = []
+    for item in newest.values():
+        year = int(item.get("year") or 0)
+        title = str(item.get("title") or "").strip()
+        conf = {
+            "id": f"mlss-{item.get('id') or orv.plain(title)}",
+            "title": title, "year": year,
+            "full_name": item.get("full_name") or "",
+            "link": item.get("link"),
+            "start": item.get("start"), "end": item.get("end"), "date": item.get("date"),
+            "place": item.get("place"),
+            "field": codes_to_fields(item.get("sub"), names),
+        }
+        rec = make_record(conf, paper=(item.get("deadline"), item.get("timezone")), abstract=None,
+                          source="awesome-mlss", africa=False, sub_type="Application", kind="Summer school")
+        if str(year) in title:  # titles like "ACVSS 2026 - African Computer Vision Summer School"
+            rec["name"] = title
+        if not rec["deadline_utc"] or event_is_over(rec, today):
+            next_year = year + 1 if year else 0
+            last = rec["deadline_utc"]
+            rec.update({
+                "name": re.sub(rf"\b{year}\b", str(next_year), rec["name"]) if year else rec["name"],
+                "full_name": " ".join(re.sub(rf"\b{year}\b", "", rec["full_name"]).split()) if year else rec["full_name"],
+                "year": next_year,
+                "deadline_utc": None, "deadline_timezone": None,
+                "check_date": True,
+                "last_deadline_utc": last,
+                "last_edition": f"{title} {year}".strip() if str(year) not in title else title,
+                "expected_deadline_utc": add_years(last, 1) if last else None,
+                "event_dates": "To be announced",
+                "event_end": None,
+                "location": f"{rec['location']} (last edition)" if rec["location"] != "To be announced" else rec["location"],
+            })
+        out.append(rec)
+    return out
+
+
+def read_python_deadlines() -> list[dict]:
+    """Calls for talks from Python Deadlines (PyCon and other Python community events).
+
+    No time zone in the data means AoE (Anywhere on Earth). An extended deadline counts as the deadline.
+    Events that are over are left out; Python Deadlines adds the next year's event itself."""
+    src = EXTRA_SOURCES["Python Deadlines"]
+    items = yaml.safe_load(fetch(src["data"])) or []
+    names = field_names(src["types"])
+    today = datetime.now(timezone.utc).date()
+    out = []
+    for item in items:
+        tz = item.get("timezone") or "AoE"
+        cfp, ext = item.get("cfp"), item.get("cfp_ext")
+        conf = {
+            "id": f"pyd-{orv.plain(item.get('conference', ''))}{item.get('year')}",
+            "title": str(item.get("conference") or "").strip(),
+            "year": item.get("year"),
+            "full_name": item.get("alt_name") or "",
+            "link": item.get("cfp_link") or item.get("link"),
+            "start": item.get("start"), "end": item.get("end"),
+            "place": item.get("place"),
+            "field": codes_to_fields(item.get("sub"), names),
+            "note": f"Deadline extended (first deadline was {str(cfp)[:10]})." if ext and str(ext) > str(cfp) else None,
+        }
+        deadline = ext if ext and str(ext) > str(cfp) else cfp
+        rec = make_record(conf, paper=(deadline, tz), abstract=None, source="Python Deadlines",
+                          africa="africa" in conf["title"].lower(), sub_type="Talk proposal", kind="Community talk")
+        if rec["deadline_utc"] and event_is_over(rec, today):
+            continue
+        out.append(rec)
+    return out
+
+
+def load_source(label: str, reader, old: dict | None) -> tuple[list[dict], bool]:
+    """Run one source. If it fails, keep what it gave last time, so the other sources still load."""
+    try:
+        recs = reader()
+        print(f"  {len(recs)} entries from {label}")
+        return recs, True
+    except Exception as err:
+        kept = [dict(r) for r in (old or {}).get("conferences", []) if r.get("source") == label]
+        print(f"  warning: {label} failed ({err}); kept {len(kept)} entries from the last good data", file=sys.stderr)
+        return kept, bool(kept)
+
+
+def drop_duplicates(records: list[dict]) -> list[dict]:
+    """One card per name (and parent conference). A real deadline beats an "Upcoming" guess."""
+    best: dict[tuple, dict] = {}
+    for rec in records:
+        key = (rec["name"].lower(), rec.get("parent"))
+        if key not in best or (best[key].get("upcoming") and not rec.get("upcoming")):
+            best[key] = rec
+    kept = set(map(id, best.values()))
+    return [r for r in records if id(r) in kept]
+
+
 # ---------- Upcoming editions ----------
 
 def add_years(iso: str, years: int) -> str:
@@ -524,6 +793,10 @@ def add_upcoming(records: list[dict], api, active: list[str]) -> list[dict]:
     index = orv.conference_index(active) if active else {}
     out, made = [], 0
     for rec in records:
+        if rec.get("_scanned"):  # workshops found on OpenReview: drop them once the event is over
+            if not (rec["deadline_utc"] and event_is_over(rec, today)):
+                out.append(rec)
+            continue
         if not rec["deadline_utc"] or rec["deadline_utc"] > now_iso or rec["year"] == 0 or not event_is_over(rec, today):
             out.append(rec)
             continue
@@ -549,6 +822,7 @@ def add_upcoming(records: list[dict], api, active: list[str]) -> list[dict]:
             "event_dates": "To be announced",
             "event_end": None,
             "location": "To be announced",
+            "parent": re.sub(r"\d{4}$", str(year), rec["parent"]) if rec.get("parent") else None,
         })
         # Does OpenReview already list the next edition (even without a submission form yet)?
         vid = None
@@ -610,7 +884,7 @@ def apply_full_names(records: list[dict], path: Path) -> None:
 
 def held_in_africa(location: str) -> bool:
     """True when the last part of 'City, Country' is an African country."""
-    country = str(location or "").split(",")[-1].strip().lower()
+    country = re.sub(r"\s*\(.*?\)", "", str(location or "")).split(",")[-1].strip().lower()
     return country in AFRICAN_COUNTRIES
 
 
@@ -627,16 +901,30 @@ def main() -> int:
                     help="extra OpenReview venues to show (YAML)")
     ap.add_argument("--african", type=Path, default=DEFAULT_AFRICAN, help="hand-kept African venues (YAML)")
     ap.add_argument("--names", type=Path, default=DEFAULT_NAMES, help="hand-kept full names (YAML)")
+    ap.add_argument("--workshops", type=Path, default=DEFAULT_WORKSHOPS, help="hand-kept workshops (YAML)")
+    ap.add_argument("--schools", type=Path, default=DEFAULT_SCHOOLS, help="hand-kept summer schools (YAML)")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
 
+    old = None
+    if args.out.exists():
+        try:
+            old = json.loads(args.out.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            old = None
+
     src = SOURCES[args.source]
     print(f"Downloading {src['label']} ...")
-    raw = fetch(src["url"])
     reader = {"api": read_api, "paperswithcode": read_paperswithcode, "huggingface": read_huggingface}[args.source]
-    records = reader(raw)
-    records = latest_editions(records)
-    print(f"  {len(records)} conferences (newest edition of each)")
+    main_label = {"api": "Papers with Code"}.get(args.source, "ai-deadlines")
+    try:
+        records = latest_editions(reader(fetch(src["url"])))
+        print(f"  {len(records)} conferences (newest edition of each)")
+    except Exception as err:
+        # Keep last time's conferences (they skip the steps below, which they already went through).
+        records = [dict(r) for r in (old or {}).get("conferences", []) if r.get("source") == main_label]
+        print(f"  warning: {src['label']} failed ({err}); kept {len(records)} entries from the last good data",
+              file=sys.stderr)
 
     sources = [{"label": src["label"], "url": src["page"]}]
     api, active = None, []
@@ -646,23 +934,45 @@ def main() -> int:
         active = api.active_venues()
         if active:
             records = add_openreview(records, args.openreview_venues, api, active)
+            records, workshops_ok = add_workshops(records, api, active)
             sources.append({"label": "OpenReview", "url": "https://openreview.net/venues"})
         else:
-            orv.warn("could not read the OpenReview venue list; skipping OpenReview")
+            workshops_ok = False
+            orv.warn("could not read the OpenReview venue list")
+        if api.failures or not workshops_ok:
+            records = keep_last_good(records, old)
+            if not active and old and any(s.get("label") == "OpenReview" for s in old.get("sources", [])):
+                sources.append({"label": "OpenReview", "url": "https://openreview.net/venues"})
     records = add_upcoming(records, api, active)
     if api:
-        print(f"  OpenReview: {api.calls} calls, {api.failures} failed")
+        print(f"  OpenReview: {api.calls} calls, {api.failures} failed, {api.timeouts} timed out, "
+              f"{api.retries} rate-limit retries ({api.waited / 60:.1f} minutes waiting); "
+              f"answers took {api.seconds / 60:.1f} minutes in total")
+
+    print("Reading summer schools and community talks ...")
+    for label, reader_fn in (("awesome-mlss", read_awesome_mlss), ("Python Deadlines", read_python_deadlines)):
+        recs, ok = load_source(label, reader_fn, old)
+        records += recs
+        if ok:
+            sources.append({"label": label, "url": EXTRA_SOURCES[label]["page"]})
+    records = drop_duplicates(records)
     for rec in records:  # working values, not needed on the page
         rec.pop("cycle", None)
         rec.pop("_template", None)
+        rec.pop("_scanned", None)
         if held_in_africa(rec["location"]):
             rec["africa"] = True
 
     african = read_african(args.african)
     print(f"  {len(african)} African venues from {args.african.name}")
-    # A hand-kept entry replaces an ai-deadlines entry with the same name.
-    names = {r["name"].lower() for r in african}
-    records = [r for r in records if r["name"].lower() not in names] + african
+    workshops = read_manual(args.workshops, source="Workshops list", default_type="Workshop", africa=None)
+    print(f"  {len(workshops)} workshops from {args.workshops.name}")
+    schools = read_manual(args.schools, source="Summer schools list", default_type="Summer school", africa=None)
+    print(f"  {len(schools)} summer schools from {args.schools.name}")
+    manual = african + workshops + schools
+    # A hand-kept entry replaces an entry from the sources with the same name.
+    names = {r["name"].lower() for r in manual}
+    records = [r for r in records if r["name"].lower() not in names] + manual
     apply_full_names(records, args.names)
     for rec in records:
         clean_text(rec)
@@ -673,13 +983,10 @@ def main() -> int:
         "conferences": records,
     }
 
+    counts = {t: sum(1 for r in records if r["type"] == t) for t in TYPES}
+    print("  By type: " + ", ".join(f"{t}: {n}" for t, n in counts.items()))
+
     # Only touch the file when the data changed, so the daily job does not make empty commits.
-    old = None
-    if args.out.exists():
-        try:
-            old = json.loads(args.out.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            old = None
     if old and {k: v for k, v in old.items() if k != "updated_at"} == payload:
         print(f"No changes; {args.out} left as it is.")
         return 0

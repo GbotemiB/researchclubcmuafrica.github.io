@@ -39,6 +39,10 @@ class OpenReview:
         self.pause = pause
         self.calls = 0
         self.failures = 0
+        self.retries = 0  # "too many requests" answers
+        self.waited = 0.0  # seconds spent waiting after those answers
+        self.timeouts = 0  # calls that got no answer in time (network problems)
+        self.seconds = 0.0  # total time spent on OpenReview calls
 
     def get(self, path: str, params: dict) -> dict | None:
         url = f"{API}{path}?{urllib.parse.urlencode(params)}"
@@ -47,17 +51,23 @@ class OpenReview:
                 time.sleep(self.pause)
             self.calls += 1
             req = urllib.request.Request(url, headers={"User-Agent": "conference-deadline-tracker"})
+            started = time.monotonic()
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
-                    return json.load(resp)
+                    data = json.load(resp)
+                self.seconds += time.monotonic() - started
+                return data
             except urllib.error.HTTPError as err:
                 if err.code == 429:  # too many requests: wait longer each time
+                    self.retries += 1
+                    self.waited += 5 * (attempt + 1)
                     time.sleep(5 * (attempt + 1))
                     continue
                 if err.code in (403, 404):  # not there, or not public
                     return None
                 break
             except (urllib.error.URLError, TimeoutError):
+                self.timeouts += 1
                 time.sleep(3)
         self.failures += 1
         return None
@@ -81,23 +91,52 @@ class OpenReview:
     def details(self, venue_id: str) -> dict:
         """Name, place, start date and website of a venue. Works before its submission form exists."""
         grp = self.get("/groups", {"id": venue_id}) or {}
-        content = ((grp.get("groups") or [{}])[0]).get("content") or {}
+        return info_from_group(venue_id, ((grp.get("groups") or [{}])[0]).get("content") or {})
 
-        def val(key):
-            v = (content.get(key) or {}).get("value")
-            return v.strip() if isinstance(v, str) else v
+    def workshops(self, parent: str) -> tuple[list[dict], int] | None:
+        """All workshops under a conference, e.g. parent 'NeurIPS.cc/2026'.
 
-        start = val("start_date")
-        return {
-            "id": venue_id,
-            "deadline_utc": None,
-            "title": val("title") or "",
-            "subtitle": val("subtitle") or "",
-            "location": val("location") or "",
-            "start": datetime.fromtimestamp(start / 1000, timezone.utc).date() if isinstance(start, (int, float)) else None,
-            "website": val("website") or "",
-            "link": f"https://openreview.net/group?id={urllib.parse.quote(venue_id, safe='/')}",
-        }
+        Uses one call to list the workshop groups and one call per 40 submission forms,
+        instead of two calls per workshop. Returns (workshops with a deadline, number
+        without a submission form yet), or None if OpenReview could not be read."""
+        data = self.get("/groups", {"parent": f"{parent}/Workshop"})
+        if data is None:
+            return None
+        infos = {}
+        for grp in data.get("groups") or []:
+            content = grp.get("content") or {}
+            sub_id = (content.get("submission_id") or {}).get("value") or f"{grp['id']}/-/Submission"
+            infos[sub_id] = info_from_group(grp["id"], content)
+        ids = list(infos)
+        for i in range(0, len(ids), 40):
+            inv = self.get("/invitations", {"ids": ",".join(ids[i:i + 40]), "expired": "true"})
+            if inv is None:
+                return None
+            for item in inv.get("invitations") or []:
+                if item.get("id") in infos and item.get("duedate"):
+                    infos[item["id"]]["deadline_utc"] = ms_to_iso(item["duedate"])
+        found = [info for info in infos.values() if info["deadline_utc"]]
+        return found, len(infos) - len(found)
+
+
+def info_from_group(venue_id: str, content: dict) -> dict:
+    def val(key):
+        v = (content.get(key) or {}).get("value")
+        return v.strip() if isinstance(v, str) else v
+
+    start = val("start_date")
+    if isinstance(start, str) and start.isdigit():
+        start = int(start)
+    return {
+        "id": venue_id,
+        "deadline_utc": None,
+        "title": val("title") or "",
+        "subtitle": val("subtitle") or "",
+        "location": val("location") or "",
+        "start": datetime.fromtimestamp(start / 1000, timezone.utc).date() if isinstance(start, (int, float)) else None,
+        "website": val("website") or "",
+        "link": f"https://openreview.net/group?id={urllib.parse.quote(venue_id, safe='/')}",
+    }
 
 
 def ms_to_iso(ms) -> str:

@@ -1,4 +1,6 @@
-# African venues and workshops, kept by hand.
+# African venues, kept by hand.
+# African workshops (such as AfricaNLP) are in data/manual/workshops.yaml,
+# and African summer schools (such as the Deep Learning Indaba) in data/manual/summer-schools.yaml.
 #
 # The daily job (scripts/update_deadlines.py) adds these to the ai-deadlines list
 # and writes data/deadlines.json. Edit this file when a new call for papers comes out.
@@ -15,18 +17,8 @@
 #   place            City, Country.
 #   field            One or more fields, written in full.
 #   link             Official page.
-
-- title: AfricaNLP
-  year: 2027
-  full_name: 8th Workshop on African Natural Language Processing (at EACL, the European Chapter of the Association for Computational Linguistics)
-  submission_type: Full paper or extended abstract
-  deadline: '2026-12-15 23:59:59'
-  timezone: AoE
-  start: 2027-03-09
-  end: 2027-03-14
-  place: Athens, Greece (and online)
-  field: [Natural Language Processing]
-  link: https://africanlp.github.io/2027/
+#   type             (optional) Conference, Workshop, Summer school, Community talk or Fellowship.
+#                    Leave it out for a conference.
 
 - title: AfriCHI
   year: 2027
@@ -39,17 +31,6 @@
   place: Lagos, Nigeria
   field: [Human-Computer Interaction]
   link: https://2027.africhi.africa/tracks/papers
-
-- title: Deep Learning Indaba
-  year: 2027
-  full_name: Deep Learning Indaba, the yearly meeting of the African machine learning community
-  submission_type: Application
-  deadline: TBA
-  timezone: AoE
-  date: To be announced
-  place: To be announced
-  field: [Machine Learning]
-  link: https://deeplearningindaba.com/
 
 - title: PowerAfrica
   year: 2027
