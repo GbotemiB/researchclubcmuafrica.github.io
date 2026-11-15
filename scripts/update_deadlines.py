@@ -82,6 +82,10 @@ TZ_ALIASES = {
 UPPER_WORDS = {"ai", "nlp", "hci"}
 SMALL_WORDS = {"and", "of", "for", "on", "in", "the"}
 
+# Conferences held every two years. The list may hold only one recent edition,
+# so the gap between editions cannot always be worked out from the data.
+KNOWN_CYCLE = {"iccv": 2, "eccv": 2, "accv": 2, "lrec": 2}
+
 
 def fetch(url: str) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "conference-deadline-tracker"})
@@ -147,6 +151,10 @@ def as_date(value):
         return datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
     except (TypeError, ValueError):
         return None
+
+
+def iso_day(d) -> str | None:
+    return d.isoformat() if d else None
 
 
 def event_dates(conf: dict) -> str:
@@ -223,8 +231,13 @@ def make_record(conf: dict, *, paper, abstract, source: str, africa: bool, sub_t
         "deadline_source": source,
         "openreview_deadline_utc": None,
         "openreview_link": None,
+        "upcoming": False,
+        "expected_deadline_utc": None,
+        "last_deadline_utc": None,
+        "last_edition": None,
         "fields": fields_from(conf),
         "event_dates": event_dates(conf),
+        "event_end": iso_day(as_date(conf.get("end")) or as_date(conf.get("start"))),
         "location": location(conf),
         "link": str(conf.get("link") or "").strip(),
         "africa": africa,
@@ -277,12 +290,21 @@ def read_huggingface(raw: bytes) -> list[dict]:
 
 
 def latest_editions(records: list[dict]) -> list[dict]:
-    """Keep only the newest year of each conference, so old editions do not fill the page."""
+    """Keep only the newest year of each conference, so old editions do not fill the page.
+
+    Also note how often it happens ("cycle": 1 = every year, 2 = every two years),
+    from the gap between its two newest editions."""
+    years: dict[str, set[int]] = {}
     best: dict[str, dict] = {}
     for rec in records:
         key = rec["name"].removesuffix(str(rec["year"])).strip().lower()
+        years.setdefault(key, set()).add(rec["year"])
         if key not in best or rec["year"] > best[key]["year"]:
             best[key] = rec
+    for key, rec in best.items():
+        ys = sorted(years[key], reverse=True)
+        gap = ys[0] - ys[1] if len(ys) > 1 else 1
+        rec["cycle"] = KNOWN_CYCLE.get(orv.plain(key), gap if gap in (1, 2) else 1)
     return list(best.values())
 
 
@@ -322,8 +344,13 @@ def record_from_openreview(info: dict, *, title: str, year: int, fields: list[st
         "deadline_source": "OpenReview",
         "openreview_deadline_utc": deadline,
         "openreview_link": info["link"],
+        "upcoming": False,
+        "expected_deadline_utc": None,
+        "last_deadline_utc": None,
+        "last_edition": None,
         "fields": fields or ["Other"],
         "event_dates": or_event_dates(info),
+        "event_end": iso_day(info.get("start")),
         "location": info["location"] or "To be announced",
         "link": info["website"] or info["link"],
         "africa": africa,
@@ -335,13 +362,8 @@ def plain_differs(a: str, b: str) -> bool:
     return bool(a) and orv.plain(a) != orv.plain(b)
 
 
-def add_openreview(records: list[dict], venues_file: Path) -> list[dict]:
+def add_openreview(records: list[dict], venues_file: Path, api, active: list[str]) -> list[dict]:
     """Add OpenReview dates to matching conferences, and add the extra venues from venues_file."""
-    api = orv.OpenReview()
-    active = api.active_venues()
-    if not active:
-        orv.warn("could not read the OpenReview venue list; skipping OpenReview")
-        return records
     index = orv.conference_index(active)
     by_key = {orv.plain(r["name"].removesuffix(str(r["year"]))): r for r in records}
     matched = added = 0
@@ -397,9 +419,92 @@ def add_openreview(records: list[dict], venues_file: Path) -> list[dict]:
         by_key[key] = new
         added += 1
 
-    print(f"  OpenReview: {matched} dates added to listed conferences, {added} venues added "
-          f"({api.calls} calls, {api.failures} failed)")
+        new["cycle"] = int(item.get("cycle") or KNOWN_CYCLE.get(orv.plain(title), 1))
+        new["_template"] = str(item.get("openreview", ""))
+
+    print(f"  OpenReview: {matched} dates added to listed conferences, {added} venues added")
     return records
+
+
+# ---------- Upcoming editions ----------
+
+def add_years(iso: str, years: int) -> str:
+    t = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")
+    try:
+        t = t.replace(year=t.year + years)
+    except ValueError:  # 29 February
+        t = t.replace(year=t.year + years, day=28)
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def event_is_over(rec: dict, today: date) -> bool:
+    if rec.get("event_end"):
+        end = date.fromisoformat(rec["event_end"])
+        # Only a start date (OpenReview): allow a week for the event itself.
+        return end + (timedelta(days=7) if rec["source"] == "OpenReview" else timedelta()) < today
+    # No event dates: workshops usually happen within about four months of their deadline.
+    deadline = datetime.strptime(rec["deadline_utc"], "%Y-%m-%dT%H:%M:%SZ").date()
+    return deadline + timedelta(days=120) < today
+
+
+def add_upcoming(records: list[dict], api, active: list[str]) -> list[dict]:
+    """Swap finished conferences for their next edition, with the deadline marked as not announced.
+
+    The card shows last edition's deadline and an expected month (last deadline + one cycle).
+    If OpenReview already lists the next edition, its name, place and dates are used."""
+    today = datetime.now(timezone.utc).date()
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    index = orv.conference_index(active) if active else {}
+    out, made = [], 0
+    for rec in records:
+        if not rec["deadline_utc"] or rec["deadline_utc"] > now_iso or rec["year"] == 0 or not event_is_over(rec, today):
+            out.append(rec)
+            continue
+        cycle = rec.get("cycle", 1)
+        year = rec["year"] + cycle
+        title = rec["name"].removesuffix(str(rec["year"])).strip()
+        new = dict(rec)
+        new.update({
+            "id": f"{orv.plain(title)}{year}",
+            "name": f"{title} {year}",
+            "year": year,
+            "submission_type": "Paper",
+            "deadline_utc": None,
+            "deadline_timezone": None,
+            "abstract_deadline_utc": None,
+            "deadline_source": "Expected from last edition",
+            "openreview_deadline_utc": None,
+            "openreview_link": None,
+            "upcoming": True,
+            "expected_deadline_utc": add_years(rec["deadline_utc"], cycle),
+            "last_deadline_utc": rec["deadline_utc"],
+            "last_edition": rec["name"],
+            "event_dates": "To be announced",
+            "event_end": None,
+            "location": "To be announced",
+        })
+        # Does OpenReview already list the next edition (even without a submission form yet)?
+        vid = None
+        if rec.get("_template"):
+            vid = orv.newest_matching(active, rec["_template"]) if active else None
+            if vid and orv.split_venue_id(vid)[1] != year:
+                vid = None
+        else:
+            for y, v in index.get(orv.plain(title), []):
+                if y == year:
+                    vid = v
+        if vid and api:
+            info = api.details(vid)
+            if info.get("title") and plain_differs(info["title"], title):
+                new["full_name"] = info["title"]
+            new["location"] = info.get("location") or new["location"]
+            new["event_dates"] = or_event_dates(info)
+            new["link"] = info.get("website") or new["link"]
+            new["openreview_link"] = info["link"]
+        out.append(new)
+        made += 1
+    print(f"  {made} finished conferences replaced by their next edition (deadline not announced yet)")
+    return out
 
 
 def sort_key(rec: dict):
@@ -426,10 +531,22 @@ def main() -> int:
     print(f"  {len(records)} conferences (newest edition of each)")
 
     sources = [{"label": src["label"], "url": src["page"]}]
+    api, active = None, []
     if not args.no_openreview:
         print("Checking OpenReview ...")
-        records = add_openreview(records, args.openreview_venues)
-        sources.append({"label": "OpenReview", "url": "https://openreview.net/venues"})
+        api = orv.OpenReview()
+        active = api.active_venues()
+        if active:
+            records = add_openreview(records, args.openreview_venues, api, active)
+            sources.append({"label": "OpenReview", "url": "https://openreview.net/venues"})
+        else:
+            orv.warn("could not read the OpenReview venue list; skipping OpenReview")
+    records = add_upcoming(records, api, active)
+    if api:
+        print(f"  OpenReview: {api.calls} calls, {api.failures} failed")
+    for rec in records:  # working values, not needed on the page
+        rec.pop("cycle", None)
+        rec.pop("_template", None)
 
     african = read_african(args.african)
     print(f"  {len(african)} African venues from {args.african.name}")

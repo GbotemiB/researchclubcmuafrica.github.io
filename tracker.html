@@ -152,6 +152,12 @@
             gap: 0.6rem;
         }
 
+        .group-note {
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin: -0.5rem 0 1rem;
+        }
+
         .group-title .count {
             font-size: 0.85rem;
             font-weight: 600;
@@ -422,6 +428,7 @@
                 <div class="tracker-stats" aria-live="polite">
                     <span class="tracker-stat" id="statOpen">Loading…</span>
                     <span class="tracker-stat" id="statSoon"></span>
+                    <span class="tracker-stat" id="statUpcoming"></span>
                 </div>
             </div>
         </section>
@@ -460,8 +467,12 @@
                 <div id="tbaGroup" class="hidden">
                     <h2 class="group-title">
                         <i class="fas fa-hourglass-half" style="color:#d97706" aria-hidden="true"></i>
-                        Deadline not announced yet <span class="count" id="tbaCount">0</span>
+                        Upcoming: deadline not announced yet <span class="count" id="tbaCount">0</span>
                     </h2>
+                    <p class="group-note">
+                        The next edition of these conferences is expected, but the deadline is not out yet.
+                        The expected month is a guess based on the last edition's deadline.
+                    </p>
                     <div class="conferences-grid" id="tbaGrid"></div>
                 </div>
 
@@ -511,6 +522,19 @@
             const shortFmt = new Intl.DateTimeFormat("en-GB", {
                 timeZone: KIGALI, day: "numeric", month: "short", year: "numeric",
             });
+            const monthFmt = new Intl.DateTimeFormat("en-GB", {
+                timeZone: KIGALI, month: "long", year: "numeric",
+            });
+
+            // "Expected around late January 2027", from last edition's deadline.
+            function expectedText(conf, now) {
+                if (!conf.expectedMs) return null;
+                if (conf.expectedMs <= now) return { text: "May have passed: not in our sources yet", cls: "days-passed" };
+                const d = new Date(conf.expectedMs);
+                const day = Number(new Intl.DateTimeFormat("en-GB", { timeZone: KIGALI, day: "numeric" }).format(d));
+                const part = day <= 10 ? "early" : day <= 20 ? "mid" : "late";
+                return { text: `Expected around ${part} ${monthFmt.format(d)}`, cls: "days-many" };
+            }
 
             // Icons by field, like the cards on the open conferences page.
             const ICONS = {
@@ -598,8 +622,10 @@
                     badge.dataset.deadline = conf.deadlineMs;
                     meta.append(badge);
                 } else {
-                    meta.append(el("span", "conference-deadline", "Not announced"));
-                    meta.append(el("span", "countdown-badge days-few", "Check the official page"));
+                    meta.append(el("span", "conference-deadline", "Not announced yet"));
+                    const exp = expectedText(conf, now);
+                    meta.append(el("span", "countdown-badge " + (exp ? exp.cls : "days-few"),
+                        exp ? exp.text : "Check the official page"));
                 }
                 header.append(icon, meta);
 
@@ -608,7 +634,7 @@
                 const pills = el("div", "status-row");
                 if (st === "open") pills.append(el("span", "pill pill-open", "Open"));
                 if (st === "closed") pills.append(el("span", "pill pill-closed", "Closed"));
-                if (st === "tba") pills.append(el("span", "pill pill-tba", "Not announced"));
+                if (st === "tba") pills.append(el("span", "pill pill-tba", "Upcoming"));
                 if (conf.africa) pills.append(el("span", "pill pill-africa", "African venue"));
                 body.append(pills);
 
@@ -623,6 +649,10 @@
                     const passed = conf.abstractMs <= now ? " (passed)" : "";
                     details.append(detail("fa-file-signature",
                         `Abstract due ${kigaliFmt.format(new Date(conf.abstractMs))} Kigali time${passed}`));
+                }
+                if (conf.last_deadline_utc) {
+                    details.append(detail("fa-history",
+                        `Last deadline (${conf.last_edition}): ${shortFmt.format(new Date(conf.last_deadline_utc))}`));
                 }
                 // OpenReview date, unless it is the same as the deadline or abstract date already shown.
                 const sameAs = ms => ms && Math.abs(conf.openreviewMs - ms) <= 3600000;
@@ -653,7 +683,8 @@
                     a.rel = "noopener";
                     const ai = el("i", "fas fa-external-link-alt");
                     ai.setAttribute("aria-hidden", "true");
-                    a.append(ai, document.createTextNode("View Details"));
+                    const lastSite = conf.upcoming && !conf.openreview_link;
+                    a.append(ai, document.createTextNode(lastSite ? "Last edition's website" : "View Details"));
                     a.setAttribute("aria-label", `View details for ${conf.name} (opens in a new tab)`);
                     body.append(a);
                 }
@@ -668,7 +699,10 @@
                 const list = conferences.filter(c => field === "all" || c.fields.includes(field));
 
                 const open = list.filter(c => status(c, now) === "open").sort((a, b) => a.deadlineMs - b.deadlineMs);
-                const tba = list.filter(c => status(c, now) === "tba").sort((a, b) => a.name.localeCompare(b.name));
+                // Upcoming: soonest expected first, then ones whose expected date has passed, then no guess at all.
+                const rank = c => !c.expectedMs ? 2 : c.expectedMs <= now ? 1 : 0;
+                const tba = list.filter(c => status(c, now) === "tba").sort((a, b) =>
+                    rank(a) - rank(b) || (a.expectedMs || 0) - (b.expectedMs || 0) || a.name.localeCompare(b.name));
                 // Closed last, most recently closed first.
                 const closed = list.filter(c => status(c, now) === "closed").sort((a, b) => b.deadlineMs - a.deadlineMs);
 
@@ -692,6 +726,7 @@
                 const label = field === "all" ? "" : ` in ${field}`;
                 document.getElementById("statOpen").textContent = `${open.length} open deadline${open.length === 1 ? "" : "s"}${label}`;
                 document.getElementById("statSoon").textContent = `${soon} closing in the next 30 days`;
+                document.getElementById("statUpcoming").textContent = `${tba.length} upcoming`;
             }
 
             // Update the countdowns every 30 seconds. Redraw the lists if a deadline has just passed.
@@ -745,6 +780,7 @@
                         deadlineMs: c.deadline_utc ? Date.parse(c.deadline_utc) : null,
                         abstractMs: c.abstract_deadline_utc ? Date.parse(c.abstract_deadline_utc) : null,
                         openreviewMs: c.openreview_deadline_utc ? Date.parse(c.openreview_deadline_utc) : null,
+                        expectedMs: c.expected_deadline_utc ? Date.parse(c.expected_deadline_utc) : null,
                     }));
                     fillFieldFilter();
                     render();

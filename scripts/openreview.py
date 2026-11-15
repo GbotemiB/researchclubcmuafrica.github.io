@@ -74,6 +74,12 @@ class OpenReview:
         due = invitations[0].get("duedate") if invitations else None
         if not due:
             return None
+        info = self.details(venue_id)
+        info["deadline_utc"] = ms_to_iso(due)
+        return info
+
+    def details(self, venue_id: str) -> dict:
+        """Name, place, start date and website of a venue. Works before its submission form exists."""
         grp = self.get("/groups", {"id": venue_id}) or {}
         content = ((grp.get("groups") or [{}])[0]).get("content") or {}
 
@@ -84,7 +90,7 @@ class OpenReview:
         start = val("start_date")
         return {
             "id": venue_id,
-            "deadline_utc": ms_to_iso(due),
+            "deadline_utc": None,
             "title": val("title") or "",
             "subtitle": val("subtitle") or "",
             "location": val("location") or "",

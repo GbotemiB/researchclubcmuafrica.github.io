@@ -79,7 +79,7 @@
 
 # --- Language ---
 - openreview: aclweb.org/AACL-IJCNLP/{year}/Conference
-  title: AACL-IJCNLP
+  title: IJCNLP & AACL  # same name as in the ai-deadlines list, so it is not shown twice
   field: [Natural Language Processing]
 
 - openreview: SIGARAB.org/ArabicNLP/{year}/Conference
