@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-15T17:55:42Z",
+  "updated_at": "2026-11-15T18:15:35Z",
   "sources": [
     {
       "label": "Papers with Code AI deadlines",
@@ -1034,7 +1034,7 @@
       "id": "ipmi-conf.org/ipmi/2027/conference",
       "name": "IPMI 2027",
       "year": 2027,
-      "full_name": "International C‌onference on Information Processing in Medical Imaging",
+      "full_name": "International Conference on Information Processing in Medical Imaging",
       "submission_type": "Paper (OpenReview)",
       "deadline_utc": "2026-12-08T11:59:00Z",
       "deadline_timezone": "AoE",
@@ -1139,7 +1139,7 @@
       "id": "icwm-2027",
       "name": "ICWM 2027",
       "year": 2027,
-      "full_name": "",
+      "full_name": "International Conference on World Models",
       "submission_type": "Full paper",
       "deadline_utc": "2026-12-23T11:59:59Z",
       "deadline_timezone": "AoE",

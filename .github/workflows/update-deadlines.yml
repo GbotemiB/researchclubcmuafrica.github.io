@@ -11,6 +11,7 @@ on:
     paths:
       - data/african_venues.yml
       - data/openreview_venues.yml
+      - data/full_names.yml
       - scripts/**
 
 permissions:

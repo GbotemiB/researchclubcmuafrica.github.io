@@ -63,6 +63,16 @@
             line-height: 1.6;
         }
 
+        .last-updated {
+            margin-top: 1rem;
+            font-size: 0.9rem !important;
+            opacity: 0.9;
+        }
+
+        .last-updated i {
+            margin-right: 0.35rem;
+        }
+
         .tracker-stats {
             display: flex;
             justify-content: center;
@@ -430,6 +440,10 @@
                     <span class="tracker-stat" id="statSoon"></span>
                     <span class="tracker-stat" id="statUpcoming"></span>
                 </div>
+                <p class="last-updated" id="lastUpdated" hidden>
+                    <i class="fas fa-sync-alt" aria-hidden="true"></i>
+                    Last updated: <time id="lastUpdatedTime"></time> (Kigali time) · checked every day
+                </p>
             </div>
         </section>
 
@@ -798,7 +812,12 @@
                     });
                     src.append(", plus African venues added by the Research Club.");
                     if (data.updated_at) {
-                        src.append(` List last changed on ${shortFmt.format(new Date(data.updated_at))}.`);
+                        const updated = new Date(data.updated_at);
+                        const t = document.getElementById("lastUpdatedTime");
+                        t.dateTime = data.updated_at;
+                        t.textContent = kigaliFmt.format(updated);
+                        document.getElementById("lastUpdated").hidden = false;
+                        src.append(` Last updated on ${shortFmt.format(updated)}.`);
                     }
                 } catch (e) {
                     console.error("Error loading deadlines:", e);

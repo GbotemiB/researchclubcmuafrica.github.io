@@ -42,6 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_AFRICAN = ROOT / "data" / "african_venues.yml"
 DEFAULT_OUT = ROOT / "data" / "deadlines.json"
 DEFAULT_OPENREVIEW = ROOT / "data" / "openreview_venues.yml"
+DEFAULT_NAMES = ROOT / "data" / "full_names.yml"
 
 SOURCES = {
     "api": {
@@ -584,6 +585,29 @@ AFRICAN_COUNTRIES = {
 }
 
 
+# Characters you cannot see that sometimes come in with copied text,
+# such as the zero-width non-joiner in OpenReview's "C\u200conference".
+INVISIBLE = re.compile("[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+
+
+def clean_text(rec: dict) -> None:
+    """Remove invisible characters and extra spaces from every text field."""
+    for key, value in rec.items():
+        if isinstance(value, str):
+            rec[key] = " ".join(INVISIBLE.sub("", value).split())
+
+
+def apply_full_names(records: list[dict], path: Path) -> None:
+    """Fill in full names from the hand-kept file (it wins over the sources)."""
+    if not path.exists():
+        return
+    names = {str(k).strip().lower(): str(v).strip() for k, v in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).items()}
+    for rec in records:
+        title = rec["name"].removesuffix(str(rec["year"])).strip().lower()
+        if title in names:
+            rec["full_name"] = names[title]
+
+
 def held_in_africa(location: str) -> bool:
     """True when the last part of 'City, Country' is an African country."""
     country = str(location or "").split(",")[-1].strip().lower()
@@ -602,6 +626,7 @@ def main() -> int:
     ap.add_argument("--openreview-venues", type=Path, default=DEFAULT_OPENREVIEW,
                     help="extra OpenReview venues to show (YAML)")
     ap.add_argument("--african", type=Path, default=DEFAULT_AFRICAN, help="hand-kept African venues (YAML)")
+    ap.add_argument("--names", type=Path, default=DEFAULT_NAMES, help="hand-kept full names (YAML)")
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
 
@@ -638,6 +663,9 @@ def main() -> int:
     # A hand-kept entry replaces an ai-deadlines entry with the same name.
     names = {r["name"].lower() for r in african}
     records = [r for r in records if r["name"].lower() not in names] + african
+    apply_full_names(records, args.names)
+    for rec in records:
+        clean_text(rec)
     records.sort(key=sort_key)
 
     payload = {
