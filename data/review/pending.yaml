@@ -25,6 +25,21 @@
   found: '2026-11-15'
   start: '2027-04-22'
   end: '2027-04-23'
+- title: PART Shared Task on Parameterized Argumentative Reasoning at EACL2027
+  year: 2027
+  type: Workshop
+  submission_type: Shared task participation
+  deadline: '2026-12-11 23:59:59'
+  timezone: AoE
+  place: Athens, Greece
+  field:
+  - Natural Language Processing
+  link: https://www.aclweb.org/portal/content/part-shared-task-parameterized-argumentative-reasoning-eacl2027
+  source: ACL member portal
+  source_link: https://www.aclweb.org/portal/content/part-shared-task-parameterized-argumentative-reasoning-eacl2027
+  found: '2026-11-17'
+  start: '2027-03-09'
+  end: '2027-03-14'
 - title: The 2nd Workshop on NLP for the Iranian language family
   year: 2027
   type: Workshop

@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-11-17T07:19:03Z",
+  "updated_at": "2026-11-17T11:25:54Z",
   "sources": [
     {
       "label": "Papers with Code AI deadlines",
@@ -8878,6 +8878,38 @@
       "source": "OpenReview",
       "type": "Workshop",
       "parent": "NAACL 2027",
+      "check_date": false,
+      "recurring": null,
+      "note": null
+    },
+    {
+      "id": "ecaf-2027",
+      "name": "ECAF 2027",
+      "year": 2027,
+      "full_name": "",
+      "submission_type": "Full paper",
+      "deadline_utc": "2027-03-26T11:59:59Z",
+      "deadline_timezone": "AoE",
+      "abstract_deadline_utc": null,
+      "deadline_source": "Papers with Code",
+      "openreview_deadline_utc": null,
+      "openreview_link": null,
+      "upcoming": false,
+      "expected_deadline_utc": null,
+      "last_deadline_utc": null,
+      "last_edition": null,
+      "fields": [
+        "Machine Learning",
+        "Fairness"
+      ],
+      "event_dates": "Aug 25 - 27, 2027",
+      "event_end": "2027-08-27",
+      "location": "Vilnius, Lithuania",
+      "link": "https://2027.ecafconference.org/callForPapers",
+      "africa": false,
+      "source": "Papers with Code",
+      "type": "Conference",
+      "parent": null,
       "check_date": false,
       "recurring": null,
       "note": null
