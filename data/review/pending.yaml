@@ -220,6 +220,21 @@
   found: '2026-11-15'
   start: '2027-05-25'
   end: '2027-05-28'
+- title: Workshop on Efficient NLP for Low-Resource Languages
+  year: 2027
+  type: Workshop
+  submission_type: Paper
+  deadline: '2027-01-19 23:59:59'
+  timezone: AoE
+  place: Macau, China
+  field:
+  - Natural Language Processing
+  link: https://www.aclweb.org/portal/content/workshop-efficient-nlp-low-resource-languages
+  source: ACL member portal
+  source_link: https://www.aclweb.org/portal/content/workshop-efficient-nlp-low-resource-languages
+  found: '2026-11-27'
+  start: '2027-05-09'
+  end: '2027-05-14'
 - title: The 10th International Conference on Historical Cryptology
   year: 2027
   type: Conference
@@ -265,6 +280,21 @@
   found: '2026-11-15'
   start: '2027-06-21'
   end: '2027-06-21'
+- title: 1st Speech and Language Technologies Evaluation Workshop (SLT-Eval 2027) @ COLING 2027
+  year: 2027
+  type: Workshop
+  submission_type: Paper
+  deadline: '2027-01-22 23:59:59'
+  timezone: AoE
+  place: Macau, China
+  field:
+  - Natural Language Processing
+  link: https://www.aclweb.org/portal/content/1st-speech-and-language-technologies-evaluation-workshop-0
+  source: ACL member portal
+  source_link: https://www.aclweb.org/portal/content/1st-speech-and-language-technologies-evaluation-workshop-0
+  found: '2026-11-27'
+  start: '2027-05-14'
+  end: '2027-05-14'
 - title: LangCode 2027 Shared Task 2, Adversarial Prompt Detection @ NAACL 2027
   year: 2027
   type: Workshop
