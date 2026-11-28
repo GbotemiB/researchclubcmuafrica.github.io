@@ -100,6 +100,36 @@
   found: '2026-11-26'
   start: '2027-03-09'
   end: '2027-03-09'
+- title: The 7th International FrameNet Workshop
+  year: 2027
+  type: Workshop
+  submission_type: Paper
+  deadline: '2026-12-15 23:59:59'
+  timezone: AoE
+  place: Athens, Greece
+  field:
+  - Natural Language Processing
+  link: https://www.aclweb.org/portal/content/7th-international-framenet-workshop
+  source: ACL member portal
+  source_link: https://www.aclweb.org/portal/content/7th-international-framenet-workshop
+  found: '2026-11-28'
+  start: '2027-03-13'
+  end: '2027-03-13'
+- title: Shared Tasks on Disinformation and Persuasion co-located with EACL 2027 at SlavicNLP Workshop
+  year: 2027
+  type: Workshop
+  submission_type: Shared task participation
+  deadline: '2026-12-18 23:59:59'
+  timezone: AoE
+  place: Athens, Greece
+  field:
+  - Natural Language Processing
+  link: https://www.aclweb.org/portal/content/shared-tasks-disinformation-and-persuasion-co-located-eacl-2027-slavicnlp-workshop
+  source: ACL member portal
+  source_link: https://www.aclweb.org/portal/content/shared-tasks-disinformation-and-persuasion-co-located-eacl-2027-slavicnlp-workshop
+  found: '2026-11-28'
+  start: '2027-03-14'
+  end: '2027-03-14'
 - title: The 1st Multidisciplinary Workshop on NLP for Democracies (MultiDems)
   year: 2027
   type: Workshop
@@ -235,6 +265,21 @@
   found: '2026-11-27'
   start: '2027-05-09'
   end: '2027-05-14'
+- title: 16th Workshop on Computational Approaches to Subjectivity, Sentiment & Social Media Analysis
+  year: 2027
+  type: Workshop
+  submission_type: Paper
+  deadline: '2027-01-19 23:59:59'
+  timezone: AoE
+  place: Macau, China
+  field:
+  - Natural Language Processing
+  link: https://www.aclweb.org/portal/content/16th-workshop-computational-approaches-subjectivity-sentiment-social-media-analysis
+  source: ACL member portal
+  source_link: https://www.aclweb.org/portal/content/16th-workshop-computational-approaches-subjectivity-sentiment-social-media-analysis
+  found: '2026-11-28'
+  start: '2027-05-09'
+  end: '2027-05-09'
 - title: The 10th International Conference on Historical Cryptology
   year: 2027
   type: Conference
